@@ -100,14 +100,70 @@ bool mqtt_unsubscribe(const String &topic) {
   return mqtt_sendATCommand(cmd, "+MUNSUB: SUCCESS", GENERAL_TIMEOUT);
 }
 
+// 检查4G模块的注册状态和信号质量
+// 返回 true 表示网络正常：
+//   1. AT+CREG? 返回 0,1 或 0,5 表示已注册或漫游注册
+//   2. AT+CSQ 信号强度不等于 99 (99 表示无信号)
+bool checkNetworkStatus() {
+  String resp;
+
+  // 查询注册状态
+  flushSerial(mqttSerial);
+  if (!mqtt_sendATCommand("AT+CREG?", "OK", GENERAL_TIMEOUT, resp)) {
+    return false;
+  }
+  int idx = resp.indexOf("+CREG:");
+  if (idx == -1) {
+    return false;
+  }
+  int comma = resp.indexOf(',', idx);
+  if (comma == -1) {
+    return false;
+  }
+  String regStr = resp.substring(comma + 1);
+  regStr.trim();
+  int regStatus = regStr.toInt();
+  if (!(regStatus == 1 || regStatus == 5)) {
+    return false;
+  }
+
+  // 查询信号强度
+  resp = "";
+  flushSerial(mqttSerial);
+  if (!mqtt_sendATCommand("AT+CSQ", "OK", GENERAL_TIMEOUT, resp)) {
+    return false;
+  }
+  int csqIdx = resp.indexOf("+CSQ:");
+  if (csqIdx == -1) {
+    return false;
+  }
+  int csqComma = resp.indexOf(',', csqIdx);
+  if (csqComma == -1) {
+    return false;
+  }
+  String rssiStr = resp.substring(csqIdx + 5, csqComma);
+  rssiStr.trim();
+  int rssi = rssiStr.toInt();
+  if (rssi == 99) {
+    return false;
+  }
+
+  return true;
+}
+
 // 定时任务，查询 MQTT 连接状态
 void mqtt_sendHeartbeat(void *arg) {
   // String cmd = "AT+MQTTSTATU";
+  if (!checkNetworkStatus()) {
+    mqtt_reset();
+    return;
+  }
+
   String command = "AT+MPUB=\"" + TOPIC_CARDSCAN + "\",0,0,\"ping\"";
   flushSerial(mqttSerial);
   if (!publishWithRetry(TOPIC_PING, "ping")) {
     mqtt_reset();
-  };
+  }
 }
 
 // 发布消息到MQTT
